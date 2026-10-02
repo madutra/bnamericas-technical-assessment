@@ -1,0 +1,28 @@
+[project]
+name = "project-editor-backend"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "aiomysql>=0.3.2",
+    "cryptography>=50.0.2",
+    "fastapi>=0.142.2",
+    "httpx>=0.28.1",
+    "pydantic-settings>=2.15.0",
+    "sqlalchemy[asyncio]>=2.1.2",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "records-api",
+]
+
+[tool.uv.sources]
+records-api = { path = "../upstream" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = ["mysql: needs a reachable MySQL at EDITOR_DATABASE_URL"]

@@ -1,66 +1,85 @@
-# Project editor challenge
+# Project editor
 
-We build internal tools for a research team that keeps thousands of infrastructure project records
-accurate. Those records live in an **upstream records API** that another team owns. You cannot change
-it. Your job is the layer in front of it.
+An editor for infrastructure project records, sitting in front of an upstream records API we do not own.
+The browser talks only to our backend; the backend talks to the upstream. The original challenge is in
+[`BRIEF.md`](BRIEF.md), design choices are in [`DECISIONS.md`](DECISIONS.md), and how AI was used is in
+[`AI-TRAIL.md`](AI-TRAIL.md). [`CLAUDE.md`](CLAUDE.md) is the spec the code was built from.
 
-## Start here
+```
+browser ──▶ frontend dev server :4000 ──/api──▶ backend :8000 ──X-Api-Key──▶ upstream :8081
+            (React + MUI)                       (FastAPI)  │                  (do not modify)
+                                                           └──▶ MySQL :3306 (per-project lock + save log)
+```
 
-1. Click **Use this template** on this repository to create your own copy in your GitHub account.
-   Public or private is your choice; if private, invite `juandiegoantezana-zaga`.
-2. Run the upstream API locally. Instructions, and its known habits, are in
-   [`upstream/README.md`](upstream/README.md). It comes seeded with about 30 fictional projects.
+## Run it with Docker (nothing else to install)
 
-## What to build (about an hour, likely less with good tooling)
+Requires Docker with Compose. Builds the four services (MySQL, upstream, backend, frontend served by nginx):
 
-Use AI the way you would on a real task here, not the way you would for a quick question. We are as
-interested in how you prepared your tooling for the job as in what you asked it to do.
+```sh
+docker compose up --build                     # then open http://localhost:4000
+docker compose up --build --scale backend=3   # 3 backend instances behind nginx, as in production
+UPSTREAM_SLOW_RATE=0 UPSTREAM_TIMEOUT_RATE=0 docker compose up --build   # upstream flakiness off
+docker compose down -v                        # stop and delete the MySQL data
+```
 
-| Piece | What it needs to do |
-|---|---|
-| **A backend (Python, FastAPI)** | Sits between the browser and the upstream API. Lists projects, returns one project, saves edits to one project |
-| **A frontend (React + MUI)** | A project list, and an edit form for the project's core fields and its key dates |
-| **Safe concurrent editing** | Two people can edit the same project at the same time. If they change different fields, both changes must survive. If they change the same field, neither may silently win: the person saving second decides. The upstream gives you no help with this. Decide what "the same field" means for the key dates, and say why |
+MySQL is published on host port 3307 (user `editor`, password `editor`) to inspect `save_log`. The upstream
+is not published: only the backend can reach it.
 
-One hard rule: **the browser never calls the upstream API directly.** Everything goes through your
-backend.
+## Run it locally
 
-**Where this will run.** In production your backend runs as three instances behind a load balancer,
-and a nightly import job writes to the upstream directly, without going through your backend. You do
-not need to build either. Your design does need to survive both.
+Requires [uv](https://docs.astral.sh/uv/) (it fetches Python 3.11+ if needed), Node 20.19+ or 22.12+, and a
+MySQL 8 on `127.0.0.1:3306` (e.g. DBngin; user `root`, no password). For other credentials, copy
+`backend/.env.example` to `backend/.env` and edit `EDITOR_DATABASE_URL`. Create the database once:
 
-**You will extend this code live in the interview.** Leave it in the state you would want to work in.
+```sh
+mysql -h127.0.0.1 -uroot -e "CREATE DATABASE IF NOT EXISTS project_editor"
+```
 
-The upstream has some awkward habits. They are in its README. Dealing with them is part of the task.
-Do not modify anything in `upstream/`.
+Then one command starts the other three (Ctrl+C stops them):
 
-## What we are not asking for
+```sh
+cd frontend && npm install && cd ..
+./dev.sh            # upstream with its flakiness on (slow GETs, 504s)
+./dev.sh --stable   # flakiness off
+```
 
-This is deliberately more than fits in the time. What you cut, and why, is part of what we read. We do
-not score UI polish, test coverage percentage, formatting, or how much you produced. Something small
-that works and is honestly described beats something large that is oversold.
+Open http://localhost:4000. To try the conflict flow: open the same project in two tabs, change the same
+field in both, save both.
 
-## What to send back
+Or one terminal each, from the repo root:
 
-| Deliverable | Notes |
-|---|---|
-| **The link to your repo** | With everything committed. Replace this README with your own: what runs, what does not, and how to start it |
-| **`DECISIONS.md`** (one page) | What you chose, what you cut and why, and what would break first if this had 50 editors |
-| **Your AI trail** | Whatever your tooling left behind, committed or attached: how you set it up, what you told it, what it produced. Plus a short note: how you approached the task before any code was written, where the tool carried the work, where you overrode it, and what you checked by hand |
+```sh
+cd upstream && uv run upstream                                   # :8081
+cd backend && uv run uvicorn app.main:app --reload --port 8000   # :8000, docs at /docs
+cd frontend && npm run dev                                       # :4000
+```
 
-Please return it within a week of receiving this brief.
+## Tests
 
-## The interview
+```sh
+cd backend && uv run pytest                 # 70 tests: unit, integration against the real upstream app, MySQL
+cd backend && uv run pytest -m "not mysql"  # without a MySQL server
+cd frontend && npm test                     # 23 Jest + Testing Library tests
+cd frontend && npm run build                # type-checks app and tests, then builds
+```
 
-We use the same codebase, running on your machine, with you sharing your screen. The first part is a
-walkthrough of your decisions and of how you work with AI. In the second part we extend the code
-together, live.
+## What works
 
-**Come with the environment you actually work in**, configured the way you like it, including anything
-you have added to your AI tooling over time. Requirements will change during the session, and we want
-you to respond the way you would at work, with whatever you would normally reach for. Nothing is off
-limits. We want to see how you really work.
+- Project list, and an edit form for name, sector, country, stage and key dates (add, remove, re-date,
+  rename), with client-side validation. Linked companies are shown read-only.
+- Concurrent editing: changes to different fields (and to different key dates) from two editors both
+  survive. Changes to the same field return a conflict; the person saving second sees both values and
+  picks, with nothing preselected.
+- Saves of the same project are serialized across backend instances by a MySQL named lock.
+- Upstream 504s on save: the backend re-reads to find out whether the write landed, and writes again if
+  it did not. A save that cannot be confirmed after 3 rounds says so.
+- The nightly job's direct writes are treated like any other editor's and are not overwritten, apart
+  from the case below.
+- Every save attempt is recorded in the `save_log` table (outcome, changed fields, rounds, duration).
 
----
+## What does not (yet)
 
-All projects, companies and places in this repository are fictional.
+- A nightly-job write landing between our read and our write (milliseconds, up to seconds on a slow
+  GET) is lost. Closing that needs a version or `If-Match` from the upstream (see `DECISIONS.md`).
+- Linked companies cannot be edited (they are always preserved on save).
+- No user identity or audit of who changed what: the upstream has no notion of users.
