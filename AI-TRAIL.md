@@ -111,7 +111,15 @@ Mistakes caught in this pass, all by running things:
   After choosing "mine", the upstream held tab B's name and country, all 4 key dates and all 3 companies.
   `save_log` showed `saved`, `conflict`, `saved` (the last took 2 s: it drew one of the slow GETs).
 - Claude, in the in-app browser (second pass): the same project open in two tabs. Tab 1 changed the name and saved. Tab 2 changed the name and the country, and saved. Only the name conflicted. After choosing "mine", the upstream held tab 2's name, tab 2's country, and the untouched companies and dates.
-- Me: Concurrency problem when changing the same key date label, date and label/date (it shouldn't do anything other than give a allert message to the user). Frontend doesnt accept the same value on two key dates label. Time of every request to the upstream and backend service. Logs of changes in every update of project.
+- Me:
+  - Two tabs on the same project, editing the same key date: its date, its label, and both at once.
+    Nothing should be saved silently; the second saver must get a conflict and choose. Renaming the
+    same date in both tabs created a second date instead of a conflict — the bug that led to the
+    rename rule (see "Where I overrode the tool").
+  - The form refuses two key dates with the same label.
+  - The time of each request to the backend and the upstream (the slow GETs show up as ~2 s saves).
+  - The `save_log` in MySQL after every update: one row per save, with its outcome and the fields it
+    changed. This is how I found I was looking at the wrong database (port 3306 instead of 3307).
 
 ## My own note
 
