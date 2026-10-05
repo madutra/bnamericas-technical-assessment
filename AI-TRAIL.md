@@ -89,6 +89,21 @@ Mistakes caught in this pass, all by running things:
   recovered on its second round. With MySQL stopped, reads still worked and saves answered 503; after
   restarting it, saves worked again.
 
+- **I found a design flaw by testing two tabs:** both renamed the same key date to different labels, and
+  the project ended up with two dates instead of a conflict. The cause was the rule "rename = remove + add":
+  both sides removed the same label, which is not a conflict, and each added a different one, which is not
+  a conflict either. I decided the rule: same date with a new label = same milestone renamed; a new
+  label and a new date = a new milestone. Claude recommended inferring renames from the data on both sides,
+  rather than having the form send them, so the nightly job's renames are also caught. Claude reproduced
+  my case in the merge function first, then fixed it, then added 10 merge tests, 1 integration test and
+  1 frontend test.
+
+- **Linked companies.** Reading the upstream's README, I noticed `linked_companies` is editable there and
+  asked for it. Claude had cut it on purpose (the brief only asks for core fields and key dates). We
+  applied the same rules as key dates: identity by name, renames paired by role, whole-list fallback for
+  duplicates. Claude generalised the merge so both lists share one implementation, then added 11 backend
+  tests and 4 frontend tests.
+
 ## Checked by hand
 
 - Claude, in the in-app browser (third pass): the same project open in two tabs. Tab A renamed and saved.
@@ -96,41 +111,60 @@ Mistakes caught in this pass, all by running things:
   After choosing "mine", the upstream held tab B's name and country, all 4 key dates and all 3 companies.
   `save_log` showed `saved`, `conflict`, `saved` (the last took 2 s: it drew one of the slow GETs).
 - Claude, in the in-app browser (second pass): the same project open in two tabs. Tab 1 changed the name and saved. Tab 2 changed the name and the country, and saved. Only the name conflicted. After choosing "mine", the upstream held tab 2's name, tab 2's country, and the untouched companies and dates.
-- Me: _(fill in: what you checked yourself, e.g. reading `merge.py`, trying the 504 path, edge cases)_
+- Me: Concurrency problem when changing the same key date label, date and label/date (it shouldn't do anything other than give a allert message to the user). Frontend doesnt accept the same value on two key dates label. Time of every request to the upstream and backend service. Logs of changes in every update of project.
 
 ## My own note
 
-_Draft — rewrite in your own words before sending._
-
 **Before any code.** I started with a brainstorm, not a prompt to build. I asked Claude to read the brief,
-the upstream's README and its source, and to tell me what the real task was before writing anything. The
-answer: the CRUD is easy; the hard part is a safe per-field save on top of an API that only has a
-replace-everything `PUT`, no version, and 504s that may or may not have written, while running as three
-stateless instances next to a nightly job that writes behind our back. From that I made the decisions
-myself:
+the upstream's README and its source, and to tell me what the real task was. The answer: the CRUD is
+easy. The hard part is a safe per-field save on top of an upstream that has:
 
-- three-way merge per field, with the browser sending the version it loaded (`base`) along with the edit;
-- key dates identified by their label, compared exactly after trimming spaces, and sorted by date after a merge;
-- Vite proxying `/api`, so the browser only talks to its own origin;
-- linked companies shown read-only and always sent back as they are stored;
-- **MySQL**, which I added to make the challenge more complete. Claude pointed out that it cannot hold
-  project data (the nightly job would make it stale), so we agreed on two uses: a per-project named lock
-  (`GET_LOCK`) shared by the three instances, and a `save_log` table that records every save.
+- only a replace-everything `PUT`, with no version;
+- 504s that may or may not have written;
+- three stateless instances in front of it, and a nightly job writing behind our back.
+
+From that I made the decisions:
+
+- a three-way merge per field, with the browser sending the version it loaded (`base`) along with the edit;
+- key dates identified by their exact label (only trimmed), and sorted by date after a merge;
+- the Vite proxy for `/api`, so the browser only talks to its own origin;
+- linked companies read-only at first, since the brief did not ask for them;
+- **MySQL**, my addition to make the challenge more complete. Claude pointed out that it cannot hold
+  project data (the nightly job would make it stale). So we agreed on two uses: a per-project lock
+  shared by the three instances, and a `save_log` of every save.
 
 **Turning that into a spec.** I had Claude rewrite `CLAUDE.md` from the brainstorm as a spec of what to
-build, not a description of code. The old one still described files that had been deleted, which would
-have misled the agent. The spec fixes the merge rules, the save algorithm, the API contract, the file
-layout and the tests, so the next sessions are driven by the file and not by the conversation.
+build. The old one described deleted files, which would have misled the agent. The spec fixes the merge
+rules, the save algorithm, the API contract, the layout and the tests, so the build follows the file,
+not the conversation.
 
-**Where I overrode the tool.** _(fill in, e.g. adding MySQL; any plan step you changed)_
+**Where I overrode the tool.**
 
-**Where I was corrected.** My first `CLAUDE.md` said horizontal scaling would handle 50 editors. The
-brainstorm showed that the first thing to break is correctness, not capacity: the window between the
-backend's read and its write. The MySQL lock closes it between our own editors, but not for the nightly
-job. Only an upstream version or `If-Match` could close it for the job.
+- **MySQL.** Claude's recommendation was to only document a shared lock. I chose to build it, with a
+  save log, and accepted the extra service.
+- **What goes in the spec.** Claude put a note about my experience level into `CLAUDE.md`. I removed it:
+  the repo is a deliverable, not a place for notes about me.
+- **Deprecations.** My editor flagged `@asynccontextmanager` as deprecated. Claude first said it was not,
+  having checked only at runtime. I insisted on the exact line. A type checker then confirmed the
+  problem (an `AsyncIterator` return annotation), and it was fixed in two files.
+- **Docker.** I asked for a Docker setup so anyone can run the project without installing anything. Its
+  first run exposed two real bugs that my local setup hid: a missing `cryptography` package, and a lock
+  failure that surfaced as 500 instead of 503.
+- **The rename rule for key dates.** Testing two tabs, I renamed the same key date in both and got two
+  dates instead of a conflict. I decided the rule: a new label with the same date is the same milestone;
+  a new label and a new date is a new one. Claude implemented it, inferring renames from the data.
+- **Linked companies.** Reading the upstream's README, I saw they are editable there and asked for it,
+  reversing my earlier decision. They now follow the same rules as key dates (identity by name, renames
+  paired by role).
 
-**Next steps.**
-1. Ask Claude for an implementation plan from `CLAUDE.md`, review it, then let it implement in small steps
-   with tests after each.
-2. Check by hand that everything was built as specified (see "Checked by hand").
-3. Rewrite `README.md` and `DECISIONS.md` for the new implementation.
+**Where I was corrected.**
+
+- **Scaling.** My first `CLAUDE.md` said horizontal scaling would handle 50 editors. The brainstorm showed
+  that the first thing to break is correctness, not capacity: the window between the backend's read and
+  its write. The MySQL lock closes it between our own editors. For the nightly job, only an upstream
+  version or `If-Match` could.
+- **The database I was looking at.** When a save seemed missing, Claude used the logs to show that every
+  save had reached the backend and been logged. The tool I was using (HeidiSQL) was connected to the
+  local MySQL on 3306, not to the Docker one on 3307.
+
+**What I checked by hand.** See "Checked by hand" above.

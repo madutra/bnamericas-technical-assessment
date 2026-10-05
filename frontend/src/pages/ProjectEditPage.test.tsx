@@ -23,7 +23,7 @@ const stored: Project = {
   key_dates: [{ label: 'Tender launch', date: '2026-01-10' }],
   linked_companies: [{ name: 'Varelo Energia SA', role: 'owner' }],
 }
-const { id: _id, linked_companies: _lc, ...editable } = stored
+const { id: _id, ...editable } = stored
 
 function renderPage() {
   render(
@@ -46,10 +46,10 @@ beforeEach(() => {
   getProject.mockResolvedValue(stored)
 })
 
-test('shows the project with read-only linked companies, and Save is off until something changes', async () => {
+test('shows the project with its linked companies, and Save is off until something changes', async () => {
   renderPage()
   expect(await screen.findByDisplayValue('Original')).toBeInTheDocument()
-  expect(screen.getByText('Varelo Energia SA · Owner')).toBeInTheDocument()
+  expect(screen.getByDisplayValue('Varelo Energia SA')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
 })
 
@@ -72,12 +72,12 @@ test('does not send an invalid form', async () => {
 
 test('on a conflict, choosing mine resends against the current version', async () => {
   const current = { ...stored, name: 'Theirs', country: 'Peru' }
-  const { id: _i, linked_companies: _l, ...currentEditable } = current
+  const { id: _i, ...currentEditable } = current
   saveProject
     .mockRejectedValueOnce(new api.SaveConflictError({
       current,
       merged: { ...currentEditable, name: 'Theirs' },
-      conflicts: [{ slot: 'name', field: 'name', label: null, base: 'Original', mine: 'Mine', theirs: 'Theirs' }],
+      conflicts: [{ slot: 'name', field: 'name', key: null, base: 'Original', mine: 'Mine', theirs: 'Theirs' }],
     }))
     .mockResolvedValueOnce({ ...current, name: 'Mine' })
 
@@ -117,4 +117,18 @@ test('a slow save says it is still confirming', async () => {
   await act(async () => finish(stored))
   expect(screen.queryByText(/Still confirming/)).not.toBeInTheDocument()
   jest.useRealTimers()
+})
+
+test('adding a linked company sends it with the save', async () => {
+  saveProject.mockResolvedValue(stored)
+  renderPage()
+  await screen.findByDisplayValue('Original')
+  await userEvent.click(screen.getByRole('button', { name: 'Add company' }))
+  const names = screen.getAllByLabelText('Company')
+  await userEvent.type(names[names.length - 1], 'Nueva Ingenieria SAS')
+  await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+  expect(saveProject).toHaveBeenCalledWith('P-1', editable, {
+    ...editable,
+    linked_companies: [...editable.linked_companies, { name: 'Nueva Ingenieria SAS', role: 'owner' }],
+  })
 })

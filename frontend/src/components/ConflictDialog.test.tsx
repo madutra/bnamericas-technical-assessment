@@ -4,10 +4,12 @@ import type { Conflict } from '../types'
 import ConflictDialog from './ConflictDialog'
 
 const conflicts: Conflict[] = [
-  { slot: 'name', field: 'name', label: null, base: 'Base', mine: 'Mine', theirs: 'Theirs' },
+  { slot: 'name', field: 'name', key: null, base: 'Base', mine: 'Mine', theirs: 'Theirs' },
   {
-    slot: 'key_dates[Tender launch]', field: 'key_dates', label: 'Tender launch',
-    base: '2026-01-10', mine: null, theirs: '2026-03-01',
+    slot: 'key_dates[Tender launch]', field: 'key_dates', key: 'Tender launch',
+    base: { label: 'Tender launch', date: '2026-01-10' },
+    mine: null,
+    theirs: { label: 'Tender launch', date: '2026-03-01' },
   },
 ]
 
@@ -21,7 +23,7 @@ test('nothing is preselected and saving waits for every choice', async () => {
 
   await userEvent.click(screen.getByLabelText('Mine: Mine'))
   expect(save).toBeDisabled()
-  await userEvent.click(screen.getByLabelText('Theirs: 2026-03-01'))
+  await userEvent.click(screen.getByLabelText('Theirs: Tender launch: 2026-03-01'))
   expect(save).toBeEnabled()
 
   await userEvent.click(save)

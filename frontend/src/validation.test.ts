@@ -7,6 +7,7 @@ const base: EditableProject = {
   country: 'Chile',
   stage: 'idea',
   key_dates: [{ label: 'Tender launch', date: '2026-01-10' }],
+  linked_companies: [{ name: 'Varelo Energia SA', role: 'owner' }],
 }
 
 test('a valid project has no errors', () => {
@@ -35,5 +36,21 @@ test('labels are case-sensitive', () => {
 
 test('duplicates already stored are tolerated while the list is untouched', () => {
   const stored = { ...base, key_dates: [...base.key_dates, { label: 'Tender launch', date: '2026-05-05' }] }
+  expect(validate({ ...stored, name: 'Renamed' }, stored)).toEqual({})
+})
+
+test('companies need a name, and a company cannot be linked twice', () => {
+  const draft: EditableProject = {
+    ...base,
+    linked_companies: [...base.linked_companies, { name: ' Varelo Energia SA', role: 'developer' }, { name: '', role: 'owner' }],
+  }
+  expect(validate(draft, base)).toEqual({
+    'linked_companies.1.name': 'This company is already linked',
+    'linked_companies.2.name': 'Company name is required',
+  })
+})
+
+test('a company already stored twice is tolerated while the list is untouched', () => {
+  const stored: EditableProject = { ...base, linked_companies: [...base.linked_companies, { name: 'Varelo Energia SA', role: 'developer' }] }
   expect(validate({ ...stored, name: 'Renamed' }, stored)).toEqual({})
 })

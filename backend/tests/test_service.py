@@ -114,3 +114,30 @@ async def test_two_concurrent_saves_are_serialized_and_both_survive():
     await asyncio.gather(save(upstream, request(name="Mine"), lock=lock),
                          save(upstream, request(country="Peru"), lock=lock))
     assert (upstream.project.name, upstream.project.country) == ("Mine", "Peru")
+
+
+async def test_two_users_editing_same_key_date_label_concurrently_one_conflicts():
+    lock = FakeLock()
+    upstream = FakeUpstream(stored())
+    req_a = request(key_dates=[{"label": "Tender launch", "date": "2026-02-01"}])
+    req_b = request(key_dates=[{"label": "Tender launch", "date": "2026-03-01"}])
+    results = await asyncio.gather(
+        save(upstream, req_a, lock=lock),
+        save(upstream, req_b, lock=lock),
+        return_exceptions=True,
+    )
+    successes = [r for r in results if isinstance(r, Project)]
+    conflicts = [r for r in results if isinstance(r, SaveConflict)]
+    assert len(successes) == 1 and len(conflicts) == 1
+    [conflict] = conflicts[0].response.conflicts
+    assert conflict.slot == "key_dates[Tender launch]"
+
+
+async def test_log_failure_does_not_fail_the_save():
+    class FailingSaveLog:
+        async def record(self, entry) -> None:
+            raise RuntimeError("DB is down")
+
+    upstream = FakeUpstream(stored())
+    result = await save(upstream, request(name="Mine"), log=FailingSaveLog())
+    assert result.name == "Mine"

@@ -57,18 +57,18 @@ cd frontend && npm run dev                                       # :4000
 ## Tests
 
 ```sh
-cd backend && uv run pytest                 # 70 tests: unit, integration against the real upstream app, MySQL
+cd backend && uv run pytest                 # 93 tests: unit, integration against the real upstream app, MySQL
 cd backend && uv run pytest -m "not mysql"  # without a MySQL server
-cd frontend && npm test                     # 23 Jest + Testing Library tests
+cd frontend && npm test                     # 28 Jest + Testing Library tests
 cd frontend && npm run build                # type-checks app and tests, then builds
 ```
 
 ## What works
 
 - Project list, and an edit form for name, sector, country, stage and key dates (add, remove, re-date,
-  rename), with client-side validation. Linked companies are shown read-only.
-- Concurrent editing: changes to different fields (and to different key dates) from two editors both
-  survive. Changes to the same field return a conflict; the person saving second sees both values and
+  rename) and linked companies (add, remove, rename, change role), with client-side validation.
+- Concurrent editing: changes to different fields (and to different key dates or companies) from two
+  editors both survive. Changes to the same field return a conflict; the person saving second sees both values and
   picks, with nothing preselected.
 - Saves of the same project are serialized across backend instances by a MySQL named lock.
 - Upstream 504s on save: the backend re-reads to find out whether the write landed, and writes again if
@@ -81,5 +81,4 @@ cd frontend && npm run build                # type-checks app and tests, then bu
 
 - A nightly-job write landing between our read and our write (milliseconds, up to seconds on a slow
   GET) is lost. Closing that needs a version or `If-Match` from the upstream (see `DECISIONS.md`).
-- Linked companies cannot be edited (they are always preserved on save).
 - No user identity or audit of who changed what: the upstream has no notion of users.

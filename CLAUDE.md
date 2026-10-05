@@ -68,18 +68,31 @@ nightly job needs no special case: its writes are simply "theirs".
 ### Slots, and what "the same field" means for key dates
 
 - Each scalar field (`name`, `sector`, `country`, `stage`) is one slot.
-- **Each key date is one slot, identified by its label.** Labels are compared exactly after trimming
-  surrounding whitespace (case-sensitive: "Tender launch" ≠ "tender launch").
-- A slot's value is the date, or "absent". So re-dating two different labels never conflicts;
-  re-dating vs deleting the same label does; renaming a label = removing one slot and adding another.
+- **Each key date is one slot, identified by its label in `base`** (or its own label if it is new).
+  Labels are compared exactly after trimming surrounding whitespace (case-sensitive: "Tender launch" ≠
+  "tender launch").
+- A slot's value is the whole key date (label + date), or "absent". So re-dating two different labels
+  never conflicts; re-dating vs deleting the same label does.
+- **Renames keep the slot.** On each side (`mine` and `theirs`, separately), a base label that disappeared
+  is paired with a new label carrying **the same date**, if that pairing is unique both ways
+  (`find_renames`). Two people renaming the same date differently therefore conflict instead of producing
+  two dates; rename vs re-date or delete of the same date conflicts too. Renaming *and* re-dating at once is
+  not paired: it is a new date plus a removal. Ambiguous cases (several candidates with the same date) are
+  not paired either. The pairing is inferred from the data, so it also catches the nightly job's renames.
+- If a merge would still produce duplicate labels (e.g. I renamed to a label they just added), the merge
+  is redone with the whole list as one slot (below).
 - **Duplicate labels** (the upstream allows them, e.g. via the nightly import): if `base`, `proposed` or
   `theirs` has a duplicated label, the whole `key_dates` list becomes **one slot**, compared as a whole,
   so duplicates are never collapsed or dropped. Our API must not *create* duplicates: reject `proposed`
   with duplicate labels unless `proposed.key_dates` equals `base.key_dates` (untouched stored duplicates).
 - **Order:** `merged.key_dates` is always sorted by `(date, label)`. Compare lists in sorted form, so an
   order-only difference is never a change.
-- `linked_companies` is not editable. It is not part of `proposed`; every PUT sends `theirs.linked_companies`
-  unchanged.
+- **Linked companies follow the same rules, keyed by company name** (trimmed, case-sensitive). The slot
+  value is the company (name + role), so changing the role of the same company concurrently conflicts,
+  while changes to different companies merge. A rename (e.g. fixing a typo in the name) is paired by
+  **role**, as key-date renames are paired by date. The same company twice (two roles) makes the whole
+  companies list one slot; our API rejects *new* duplicate names (`Linked company names must be unique`).
+  Companies are sorted by `(name, role)`. Both lists share one implementation (`ListField` in `merge.py`).
 
 ### Save algorithm (`PUT /api/projects/{id}`)
 
@@ -87,7 +100,7 @@ nightly job needs no special case: its writes are simply "theirs".
 2. Acquire the **MySQL named lock** for this project (below). Timeout → **503** with `Retry-After`.
 3. `GET` the upstream → `theirs`.
 4. Merge. Conflicts → **409** with the conflict body. Nothing left to change → return `theirs` (200, no PUT).
-5. `PUT` merged + `theirs.linked_companies`.
+5. `PUT` the merged record (every editable field, including both lists).
 6. On `504` or our own HTTP timeout on the PUT: go back to step 3 (re-read, re-merge). If our write
    landed, the merge finds nothing to do and the save succeeds; if it was lost, we write again; if
    someone else wrote meanwhile, the merge sees it. At most `EDITOR_SAVE_ATTEMPTS` (default 3) rounds,
@@ -126,14 +139,15 @@ pydantic-settings, SQLAlchemy async + aiomysql (+ `cryptography`, required by My
   `X-Api-Key`. Maps responses to exceptions: `UpstreamNotFound` (404), `UpstreamRejected` (422),
   `UpstreamWriteUnknown` (PUT 504 or our timeout on a PUT), `UpstreamUnavailable` (anything else).
 - `app/schemas.py` — Pydantic models for what the browser sees. Validating upstream payloads through them
-  drops the read-only fields. `KeyDate`, `EditableProject` (name, sector, country, stage, key_dates),
-  `Project` (+ `id`, read-only `linked_companies`), `ProjectSummary` (list row: id, name, sector, country,
-  stage), `SaveRequest` (`{base, proposed}`), `Conflict` (`slot`, `base`, `mine`, `theirs`),
+  drops the read-only fields. `KeyDate`, `LinkedCompany`, `EditableProject` (name, sector, country,
+  stage, key_dates, linked_companies), `Project` (+ `id`), `ProjectSummary` (list row: id, name, sector, country,
+  stage), `SaveRequest` (`{base, proposed}`), `Conflict` (`slot`, `field`, `key`, `base`, `mine`, `theirs`),
   `ConflictResponse` (`current`, `merged`, `conflicts`).
 - `app/merge.py` — **pure functions**, no I/O: split a project into slots, three-way merge, rebuild a
-  project from slots. Conflict slot names: `name`, `sector`, `country`, `stage`, `key_dates[<label>]`, or
-  `key_dates` for the whole-list fallback. Each `Conflict` also carries `field` and `label`, so the
-  frontend never parses slot names.
+  project from slots. Conflict slot names: `name`, `sector`, `country`, `stage`, `key_dates[<label>]`,
+  `linked_companies[<name>]`, or `key_dates` / `linked_companies` for a whole-list fallback. Each
+  `Conflict` also carries `field` and `key` (the item's identity in `base`), so the frontend never parses
+  slot names.
 - `app/locking.py` — `ProjectLock`/`SaveLog` protocols, their MySQL versions (`MySQLProjectLock`,
   `MySQLSaveLog`) and the table definition. Fakes for tests live in `tests/fakes.py`.
 - `app/service.py` — `save_project(...)`: the algorithm above. Depends on the client, lock and log
@@ -168,10 +182,12 @@ Router. Dev server on port 4000; `vite.config.ts` proxies `/api` to `BACKEND_URL
   conflicts again), so a cancelled dialog can never revert someone else's change.
 - `src/types.ts` — the shared shapes (mirror `schemas.py`), `editableOf`, `humanize`.
 - `src/components/KeyDatesEditor.tsx` — rows of label + date, add/remove.
-- `src/validation.ts` — mirrors the backend: required fields, valid enums, unique key-date labels.
+- `src/components/LinkedCompaniesEditor.tsx` — rows of company name + role, add/remove.
+- `src/validation.ts` — mirrors the backend: required fields, valid enums, unique key-date labels and
+  company names.
 - `src/pages/ProjectListPage.tsx` — table of projects, click to edit.
 - `src/pages/ProjectEditPage.tsx` — form for name, sector, country, stage and a key-dates editor (add,
-  remove, re-date, rename); linked companies shown read-only. Keeps `base` (last loaded/saved version)
+  remove, re-date, rename) and a linked-companies editor (add, remove, rename, change role). Keeps `base` (last loaded/saved version)
   and `draft`; after a conflict `base` becomes the 409's `current`. Saving shows progress, and after 3 s
   says it is still confirming (slow GETs and 504 retries).
 - `src/components/ConflictDialog.tsx` — one row per conflict: base, mine, theirs. **Nothing preselected**;
@@ -182,7 +198,8 @@ Router. Dev server on port 4000; `vite.config.ts` proxies `/api` to `BACKEND_URL
 Test the logic hard; do not chase a coverage number (the brief does not score it).
 
 - **Backend unit:** `test_merge.py` (every row of the merge table, key-date cases: different labels,
-  same label, re-date vs delete, rename, duplicates fallback, sorting, no-op), `test_upstream.py` (httpx
+  same label, re-date vs delete, renames (same date, conflicting renames, rename vs re-date/delete,
+  rename + re-date, ambiguous pairing, rename onto their new label), duplicates fallback, sorting, no-op), `test_upstream.py` (httpx
   `MockTransport`, status → exception mapping), `test_service.py` (fake client/lock/log: 504 landed,
   504 lost, 504 then someone else wrote, attempts exhausted, conflict, no-op, lock timeout, log failure
   does not fail the save).
@@ -233,7 +250,7 @@ Vite proxy's role and spreads `/api` across scaled backend instances.
 
 ## Out of scope (say so in DECISIONS.md)
 
-Editing linked companies, user identity and auth, presence ("X is editing"), push updates, caching,
+User identity and auth, presence ("X is editing"), push updates, caching,
 message queues, DB migrations tooling, end-to-end browser tests, UI polish.
 
 ## Deliverables (from the brief)

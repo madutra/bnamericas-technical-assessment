@@ -3,7 +3,6 @@ import SaveIcon from '@mui/icons-material/Save'
 import {
   Alert,
   Button,
-  Chip,
   CircularProgress,
   Divider,
   MenuItem,
@@ -18,6 +17,7 @@ import { Link as RouterLink, useParams } from 'react-router-dom'
 import { ApiError, SaveConflictError, getProject, saveProject } from '../api'
 import ConflictDialog from '../components/ConflictDialog'
 import KeyDatesEditor from '../components/KeyDatesEditor'
+import LinkedCompaniesEditor from '../components/LinkedCompaniesEditor'
 import { applyChoices, type Choice } from '../conflicts'
 import { SECTORS, STAGES, editableOf, humanize, type ConflictResponse, type EditableProject, type Project } from '../types'
 import { validate } from '../validation'
@@ -138,13 +138,8 @@ export default function ProjectEditPage() {
             onChange={(key_dates) => set({ key_dates })} />
 
           <Divider />
-          <Typography variant="subtitle1">Linked companies</Typography>
-          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
-            {project.linked_companies.map((c) => (
-              <Chip key={`${c.name}-${c.role}`} label={`${c.name} · ${humanize(c.role)}`} variant="outlined" />
-            ))}
-          </Stack>
-          <Typography variant="caption" color="text.secondary">Linked companies are read-only here.</Typography>
+          <LinkedCompaniesEditor companies={draft.linked_companies} errors={visibleErrors} disabled={saving}
+            onChange={(linked_companies) => set({ linked_companies })} />
 
           {saveError && (
             <Alert severity="error" action={saveError.status === 504 ? <Button color="inherit" onClick={reload}>Reload</Button> : undefined}>

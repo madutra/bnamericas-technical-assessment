@@ -1,9 +1,12 @@
+import logging
 import time
 
 from app.locking import LockTimeout, LockUnavailable, ProjectLock, SaveLog, SaveLogEntry
 from app.merge import three_way_merge
 from app.schemas import ConflictResponse, Project, SaveRequest
 from app.upstream import UpstreamClient, UpstreamNotFound, UpstreamRejected, UpstreamWriteUnknown
+
+logger = logging.getLogger(__name__)
 
 
 class SaveConflict(Exception):
@@ -49,8 +52,8 @@ async def save_project(
                     outcome = "noop" if rounds == 1 else "saved"
                     return current
                 changed = result.changed_slots
+                # PUT replaces every editable field and both lists: merged is the complete record to store.
                 body = result.merged.model_dump(mode="json")
-                body["linked_companies"] = [c.model_dump(mode="json") for c in current.linked_companies]
                 try:
                     stored = await upstream.put_project(project_id, body)
                 except UpstreamWriteUnknown:
@@ -73,10 +76,13 @@ async def save_project(
         raise
     finally:
         # After the lock is released, so logging never holds up the next saver.
-        await log.record(SaveLogEntry(
-            project_id=project_id,
-            outcome=outcome,
-            attempts=rounds,
-            duration_ms=round((time.monotonic() - started) * 1000),
-            changed_slots=changed,
-        ))
+        try:
+            await log.record(SaveLogEntry(
+                project_id=project_id,
+                outcome=outcome,
+                attempts=rounds,
+                duration_ms=round((time.monotonic() - started) * 1000),
+                changed_slots=changed,
+            ))
+        except Exception:
+            logger.exception("Could not write the save log for %s", project_id)
